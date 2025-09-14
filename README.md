@@ -16,13 +16,15 @@ The Go script runs in its own process and cannot run commands in the parent shel
 
 ```
 # add to ~/.zshrc or ~/.bashrc
-function mynav() {
-  dir=$(~/bin/talias)   # Run your Go TUI app and capture its output
+function nav() {
+  dir=$(talias)   # Run your Go TUI app and capture its output
   if [ -n "$dir" ]; then
     cd "$dir" || return
   fi
 }
 ```
+
+Optionally you can build the app to any other directory and then update the shell script to point there instead, e.g. `dir=$(~/bin/talias)`. Also note that the name of the function above will be what is used to call the application.
 
 ### Set Options
 
