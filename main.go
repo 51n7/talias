@@ -14,7 +14,7 @@ import (
 type Option struct {
   Title   string `json:"title"`
   Details string `json:"details"`
-  Path    string `json:"path"`
+  Command string `json:"command"`
 }
 
 func loadOptionsFromFile(filename string) ([]Option, error) {
@@ -57,16 +57,16 @@ func main() {
     option := o // capture
     list.AddItem(option.Title, "", 0, func() {
 
-      // Expand tilde to home directory
-      expandedPath := option.Path
-      if strings.HasPrefix(option.Path, "~/") {
+      // Expand tilde to home directory in the command
+      expandedCommand := option.Command
+      if strings.Contains(option.Command, "~/") {
         homeDir, err := os.UserHomeDir()
         if err == nil {
-          expandedPath = filepath.Join(homeDir, option.Path[2:])
+          expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
         }
       }
       
-      fmt.Print(expandedPath)
+      fmt.Print(expandedCommand)
       app.Stop()
     })
 	}
