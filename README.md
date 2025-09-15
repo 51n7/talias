@@ -17,9 +17,9 @@ The Go script runs in its own process and cannot run commands in the parent shel
 ```
 # add to ~/.zshrc or ~/.bashrc
 function nav() {
-  dir=$(talias)   # Run your Go TUI app and capture its output
-  if [ -n "$dir" ]; then
-    cd "$dir" || return
+  command=$(talias)   # talias built to /usr/local/bin/talias
+  if [ -n "$command" ]; then
+    eval "$command" || return
   fi
 }
 ```
@@ -33,19 +33,19 @@ Create `~/.talias/options.json` with the following config:
 ```
 [
   {
-    "title": "cd to Desktop",
-    "details": "cd ~/Desktop",
-    "path": "~/Desktop"
+    "title": "Desktop", // menu label
+    "details": "cd ~/Desktop", // pretty description in bottom box
+    "command": "cd ~/Desktop && pwd" // command to be executed
   },
   {
-    "title": "cd to Documents",
+    "title": "Documents",
     "details": "cd ~/Documents",
-    "path": "~/Documents"
+    "command": "cd ~/Documents && pwd"
   },
   {
-    "title": "cd to Downloads",
+    "title": "Downloads",
     "details": "cd ~/Downloads",
-    "path": "~/Downloads"
+    "command": "cd ~/Downloads && pwd"
   }
 ]
 ```
