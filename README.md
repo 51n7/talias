@@ -1,6 +1,6 @@
 # TAlias
 
-This project creates a UI to quickly find and run custom commands, see prototype preview gif below.
+This project creates a UI to quickly find and run custom commands (i.e. terminal alias menu), see prototype preview gif below.
 
 ### Build Script
 - Clone project
