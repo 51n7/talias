@@ -144,12 +144,15 @@ func main() {
 
 	// Global input capture for navigation and quit
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
-		if (event.Key() == tcell.KeyRune && event.Rune() == 'q') || event.Key() == tcell.KeyEscape {
+		
+		// 'q' always quits the application
+		if event.Key() == tcell.KeyRune && event.Rune() == 'q' {
 			app.Stop()
 			return nil
 		}
-		// Back navigation (press 'b' or Backspace)
-		if (event.Key() == tcell.KeyRune && event.Rune() == 'b') || event.Key() == tcell.KeyBackspace {
+
+		// Escape: go back if in submenu, quit if at top level
+		if event.Key() == tcell.KeyEscape {
 			if len(menuStack) > 0 {
 
 				// Go back to previous menu
@@ -158,7 +161,7 @@ func main() {
 				if len(menuStack) == 0 {
 					currentTitle = "Main Menu"
 				} else {
-					
+
 					// Find the title of the parent menu
 					currentTitle = "Main Menu" // fallback
 					for _, opt := range rootOptions {
@@ -170,6 +173,9 @@ func main() {
 				}
 				populateList()
 				infoBox.SetText("Select an option from " + currentTitle)
+			} else {
+				// At top level, quit the application
+				app.Stop()
 			}
 			return nil
 		}
