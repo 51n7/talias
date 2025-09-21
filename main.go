@@ -12,9 +12,10 @@ import (
 )
 
 type Option struct {
-  Title   string `json:"title"`
-  Details string `json:"details"`
-  Command string `json:"command"`
+  Title    string   `json:"title"`
+  Details  string   `json:"details"`
+  Command  string   `json:"command"`
+  Children []Option `json:"children,omitempty"`
 }
 
 func loadOptionsFromFile(filename string) ([]Option, error) {
@@ -34,6 +35,18 @@ func loadOptionsFromFile(filename string) ([]Option, error) {
 	return options, nil
 }
 
+func containsOption(options []Option, target []Option) bool {
+	if len(options) != len(target) {
+		return false
+	}
+	for i, opt := range options {
+		if opt.Title != target[i].Title {
+			return false
+		}
+	}
+	return true
+}
+
 func main() {
 	app := tview.NewApplication()
 
@@ -45,31 +58,19 @@ func main() {
 	}
 	
 	configPath := filepath.Join(homeDir, ".talias", "options.json")
-	options, err := loadOptionsFromFile(configPath)
+	rootOptions, err := loadOptionsFromFile(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading options: %v\n", err)
 		os.Exit(1)
 	}
 
+	// Navigation state
+	var currentOptions []Option = rootOptions
+	var menuStack [][]Option
+	var currentTitle string = "Main Menu"
+
 	// Top: list
 	list := tview.NewList()
-	for _, o := range options {
-    option := o // capture
-    list.AddItem(option.Title, "", 0, func() {
-
-      // Expand tilde to home directory in the command
-      expandedCommand := option.Command
-      if strings.Contains(option.Command, "~/") {
-        homeDir, err := os.UserHomeDir()
-        if err == nil {
-          expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
-        }
-      }
-      
-      fmt.Print(expandedCommand)
-      app.Stop()
-    })
-	}
 	list.SetBackgroundColor(tcell.ColorDefault)
 
 	// Bottom: info box
@@ -79,10 +80,54 @@ func main() {
 		SetWrap(true)
 	infoBox.SetBackgroundColor(tcell.ColorDefault)
 
+	// Function to populate list with current options
+	var populateList func()
+	populateList = func() {
+		list.Clear()
+		for _, o := range currentOptions {
+			option := o // capture
+			
+			// Add > prefix for items with children
+			displayTitle := option.Title
+			if len(option.Children) > 0 {
+				displayTitle = "> " + option.Title
+			}
+			list.AddItem(displayTitle, "", 0, func() {
+
+				// Check if this option has children
+				if len(option.Children) > 0 {
+
+					// Navigate to child menu
+					menuStack = append(menuStack, currentOptions)
+					currentOptions = option.Children
+					currentTitle = option.Title
+					populateList()
+					infoBox.SetText("Select an option from " + currentTitle)
+				} else {
+
+					// Execute command
+					expandedCommand := option.Command
+					if strings.Contains(option.Command, "~/") {
+						homeDir, err := os.UserHomeDir()
+						if err == nil {
+							expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
+						}
+					}
+					
+					fmt.Print(expandedCommand)
+					app.Stop()
+				}
+			})
+		}
+	}
+
+	// Initial population
+	populateList()
+
 	// Update bottom panel when selection changes
 	list.SetChangedFunc(func(index int, mainText string, _ string, _ rune) {
-		if index >= 0 && index < len(options) {
-			infoBox.SetText(options[index].Details)
+		if index >= 0 && index < len(currentOptions) {
+			infoBox.SetText(currentOptions[index].Details)
 		}
 	})
 
@@ -97,10 +142,35 @@ func main() {
 	
 	grid.SetBackgroundColor(tcell.ColorDefault)
 
-	// Global quit binding (press "q" or Escape anywhere to quit)
+	// Global input capture for navigation and quit
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		if (event.Key() == tcell.KeyRune && event.Rune() == 'q') || event.Key() == tcell.KeyEscape {
 			app.Stop()
+			return nil
+		}
+		// Back navigation (press 'b' or Backspace)
+		if (event.Key() == tcell.KeyRune && event.Rune() == 'b') || event.Key() == tcell.KeyBackspace {
+			if len(menuStack) > 0 {
+
+				// Go back to previous menu
+				currentOptions = menuStack[len(menuStack)-1]
+				menuStack = menuStack[:len(menuStack)-1]
+				if len(menuStack) == 0 {
+					currentTitle = "Main Menu"
+				} else {
+					
+					// Find the title of the parent menu
+					currentTitle = "Main Menu" // fallback
+					for _, opt := range rootOptions {
+						if containsOption(opt.Children, currentOptions) {
+							currentTitle = opt.Title
+							break
+						}
+					}
+				}
+				populateList()
+				infoBox.SetText("Select an option from " + currentTitle)
+			}
 			return nil
 		}
 		return event
