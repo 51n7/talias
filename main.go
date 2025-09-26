@@ -71,15 +71,39 @@ func fuzzySearch(query string, options []Option) []Option {
 	
 	for _, opt := range options {
 		titleLower := strings.ToLower(opt.Title)
-		detailsLower := strings.ToLower(opt.Details)
 		
 		// Check if query matches title or details
-		if strings.Contains(titleLower, queryLower) || strings.Contains(detailsLower, queryLower) {
+		if strings.Contains(titleLower, queryLower) {
 			results = append(results, opt)
 		}
 	}
 	
 	return results
+}
+
+// expands ~/ to the user's home directory
+func expandCommand(command string) string {
+	if !strings.Contains(command, "~/") {
+		return command
+	}
+	
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return command // Return original command if home dir can't be determined
+	}
+	
+	return strings.ReplaceAll(command, "~/", filepath.Join(homeDir, "")+"/")
+}
+
+// execute command and stop the app
+func executeCommand(option Option, app *tview.Application) {
+	if len(option.Command) == 0 {
+		return
+	}
+	
+	expandedCommand := expandCommand(option.Command)
+	fmt.Print(expandedCommand)
+	app.Stop()
 }
 
 func main() {
@@ -142,18 +166,7 @@ func main() {
 			if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
 				selectedIndex := list.GetCurrentItem()
 				if selectedIndex < len(searchResults) {
-					option := searchResults[selectedIndex]
-					if len(option.Command) > 0 {
-						expandedCommand := option.Command
-						if strings.Contains(option.Command, "~/") {
-							homeDir, err := os.UserHomeDir()
-							if err == nil {
-								expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
-							}
-						}
-						fmt.Print(expandedCommand)
-						app.Stop()
-					}
+					executeCommand(searchResults[selectedIndex], app)
 				}
 			}
 			return nil
@@ -193,18 +206,8 @@ func main() {
 					populateList()
 					infoBox.SetText("Select an option from " + currentTitle)
 				} else {
-
 					// Execute command
-					expandedCommand := option.Command
-					if strings.Contains(option.Command, "~/") {
-						homeDir, err := os.UserHomeDir()
-						if err == nil {
-							expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
-						}
-					}
-					
-					fmt.Print(expandedCommand)
-					app.Stop()
+					executeCommand(option, app)
 				}
 			})
 		}
@@ -222,17 +225,7 @@ func main() {
 				displayTitle = "> " + opt.Title
 			}
 			list.AddItem(displayTitle, "", 0, func() {
-				if len(opt.Command) > 0 {
-					expandedCommand := opt.Command
-					if strings.Contains(opt.Command, "~/") {
-						homeDir, err := os.UserHomeDir()
-						if err == nil {
-							expandedCommand = strings.ReplaceAll(opt.Command, "~/", filepath.Join(homeDir, "")+"/")
-						}
-					}
-					fmt.Print(expandedCommand)
-					app.Stop()
-				}
+				executeCommand(opt, app)
 			})
 		}
 	}
@@ -302,18 +295,7 @@ func main() {
 				if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
 					selectedIndex := list.GetCurrentItem()
 					if selectedIndex < len(searchResults) {
-						option := searchResults[selectedIndex]
-						if len(option.Command) > 0 {
-							expandedCommand := option.Command
-							if strings.Contains(option.Command, "~/") {
-								homeDir, err := os.UserHomeDir()
-								if err == nil {
-									expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
-								}
-							}
-							fmt.Print(expandedCommand)
-							app.Stop()
-						}
+						executeCommand(searchResults[selectedIndex], app)
 					}
 				}
 				return nil
