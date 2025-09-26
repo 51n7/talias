@@ -47,6 +47,41 @@ func containsOption(options []Option, target []Option) bool {
 	return true
 }
 
+func flattenOptions(options []Option) []Option {
+	var result []Option
+	for _, opt := range options {
+		if len(opt.Children) > 0 {
+			// Only add children, skip the parent
+			result = append(result, flattenOptions(opt.Children)...)
+		} else {
+			// Add leaf nodes (items with commands)
+			result = append(result, opt)
+		}
+	}
+	return result
+}
+
+func fuzzySearch(query string, options []Option) []Option {
+	if query == "" {
+		return options
+	}
+	
+	var results []Option
+	queryLower := strings.ToLower(query)
+	
+	for _, opt := range options {
+		titleLower := strings.ToLower(opt.Title)
+		detailsLower := strings.ToLower(opt.Details)
+		
+		// Check if query matches title or details
+		if strings.Contains(titleLower, queryLower) || strings.Contains(detailsLower, queryLower) {
+			results = append(results, opt)
+		}
+	}
+	
+	return results
+}
+
 func main() {
 	app := tview.NewApplication()
 
@@ -68,10 +103,64 @@ func main() {
 	var currentOptions []Option = rootOptions
 	var menuStack [][]Option
 	var currentTitle string = "Main Menu"
+	
+	// Search state
+	var searchMode bool = false
+	var searchQuery string = ""
+	var searchResults []Option
+	var allOptions []Option = flattenOptions(rootOptions) // Flattened list of all options for search
 
 	// Top: list
 	list := tview.NewList()
 	list.SetBackgroundColor(tcell.ColorDefault)
+
+	// Search input field
+	searchInput := tview.NewInputField().
+		SetLabel("Search: ").
+		SetFieldWidth(50)
+	searchInput.SetBackgroundColor(tcell.ColorDefault)
+	
+	// Custom input capture for search input to handle up/down navigation
+	searchInput.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		// Handle up/down arrow keys for list navigation without changing focus
+		if event.Key() == tcell.KeyUp {
+			currentIndex := list.GetCurrentItem()
+			if currentIndex > 0 {
+				list.SetCurrentItem(currentIndex - 1)
+			}
+			return nil
+		}
+		if event.Key() == tcell.KeyDown {
+			currentIndex := list.GetCurrentItem()
+			if currentIndex < len(searchResults)-1 {
+				list.SetCurrentItem(currentIndex + 1)
+			}
+			return nil
+		}
+		// Handle Enter to execute selected command
+		if event.Key() == tcell.KeyEnter {
+			if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
+				selectedIndex := list.GetCurrentItem()
+				if selectedIndex < len(searchResults) {
+					option := searchResults[selectedIndex]
+					if len(option.Command) > 0 {
+						expandedCommand := option.Command
+						if strings.Contains(option.Command, "~/") {
+							homeDir, err := os.UserHomeDir()
+							if err == nil {
+								expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
+							}
+						}
+						fmt.Print(expandedCommand)
+						app.Stop()
+					}
+				}
+			}
+			return nil
+		}
+		// Let all other keys (including left/right arrows) pass through to the input field
+		return event
+	})
 
 	// Bottom: info box
 	infoBox := tview.NewTextView().
@@ -121,14 +210,53 @@ func main() {
 		}
 	}
 
+	// Function to populate search results
+	var populateSearchResults func()
+	populateSearchResults = func() {
+		list.Clear()
+		searchResults = fuzzySearch(searchQuery, allOptions)
+		for _, option := range searchResults {
+			opt := option // capture
+			displayTitle := opt.Title
+			if len(opt.Children) > 0 {
+				displayTitle = "> " + opt.Title
+			}
+			list.AddItem(displayTitle, "", 0, func() {
+				if len(opt.Command) > 0 {
+					expandedCommand := opt.Command
+					if strings.Contains(opt.Command, "~/") {
+						homeDir, err := os.UserHomeDir()
+						if err == nil {
+							expandedCommand = strings.ReplaceAll(opt.Command, "~/", filepath.Join(homeDir, "")+"/")
+						}
+					}
+					fmt.Print(expandedCommand)
+					app.Stop()
+				}
+			})
+		}
+	}
+
 	// Initial population
 	populateList()
 
 	// Update bottom panel when selection changes
 	list.SetChangedFunc(func(index int, mainText string, _ string, _ rune) {
-		if index >= 0 && index < len(currentOptions) {
-			infoBox.SetText(currentOptions[index].Details)
+		if searchMode {
+			if index >= 0 && index < len(searchResults) {
+				infoBox.SetText(searchResults[index].Details)
+			}
+		} else {
+			if index >= 0 && index < len(currentOptions) {
+				infoBox.SetText(currentOptions[index].Details)
+			}
 		}
+	})
+
+	// Search input change handler
+	searchInput.SetChangedFunc(func(text string) {
+		searchQuery = text
+		populateSearchResults()
 	})
 
 	// Grid layout
@@ -142,6 +270,76 @@ func main() {
 	
 	grid.SetBackgroundColor(tcell.ColorDefault)
 
+	// Function to switch to search mode
+	switchToSearchMode := func() {
+		searchMode = true
+		searchQuery = ""
+		searchInput.SetText("")
+		grid.Clear().
+			SetRows(1, 0, 5).
+			SetColumns(0).
+			SetBorders(true).
+			SetBordersColor(tcell.ColorWhite).
+			AddItem(searchInput, 0, 0, 1, 1, 0, 0, true).
+			AddItem(list, 1, 0, 1, 1, 0, 0, false).
+			AddItem(infoBox, 2, 0, 1, 1, 0, 0, false)
+		app.SetFocus(searchInput)
+		populateSearchResults()
+		infoBox.SetText("Search mode - type to filter options")
+		
+		// Add custom input capture for list in search mode
+		list.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+			// If user presses any printable character, return focus to search input
+			if event.Key() == tcell.KeyRune {
+				app.SetFocus(searchInput)
+				// Append the character to the search input
+				currentText := searchInput.GetText()
+				searchInput.SetText(currentText + string(event.Rune()))
+				return nil
+			}
+			// Handle Enter to execute command
+			if event.Key() == tcell.KeyEnter {
+				if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
+					selectedIndex := list.GetCurrentItem()
+					if selectedIndex < len(searchResults) {
+						option := searchResults[selectedIndex]
+						if len(option.Command) > 0 {
+							expandedCommand := option.Command
+							if strings.Contains(option.Command, "~/") {
+								homeDir, err := os.UserHomeDir()
+								if err == nil {
+									expandedCommand = strings.ReplaceAll(option.Command, "~/", filepath.Join(homeDir, "")+"/")
+								}
+							}
+							fmt.Print(expandedCommand)
+							app.Stop()
+						}
+					}
+				}
+				return nil
+			}
+			return event
+		})
+	}
+
+	// Function to switch back to normal mode
+	switchToNormalMode := func() {
+		searchMode = false
+		searchQuery = ""
+		// Clear the list input capture to restore normal behavior
+		list.SetInputCapture(nil)
+		grid.Clear().
+			SetRows(0, 5).
+			SetColumns(0).
+			SetBorders(true).
+			SetBordersColor(tcell.ColorWhite).
+			AddItem(list, 0, 0, 1, 1, 0, 0, true).
+			AddItem(infoBox, 1, 0, 1, 1, 0, 0, false)
+		app.SetFocus(list)
+		populateList()
+		infoBox.SetText("Select an option from " + currentTitle)
+	}
+
 	// Global input capture for navigation and quit
 	app.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
 		
@@ -150,18 +348,22 @@ func main() {
 			app.Stop()
 			return nil
 		}
-
-		// Escape: go back if in submenu, quit if at top level
+		// '?' enters search mode
+		if event.Key() == tcell.KeyRune && event.Rune() == '?' {
+			switchToSearchMode()
+			return nil
+		}
+		// Escape: go back if in submenu, quit if at top level, exit search if in search mode
 		if event.Key() == tcell.KeyEscape {
-			if len(menuStack) > 0 {
-
+			if searchMode {
+				switchToNormalMode()
+			} else if len(menuStack) > 0 {
 				// Go back to previous menu
 				currentOptions = menuStack[len(menuStack)-1]
 				menuStack = menuStack[:len(menuStack)-1]
 				if len(menuStack) == 0 {
 					currentTitle = "Main Menu"
 				} else {
-
 					// Find the title of the parent menu
 					currentTitle = "Main Menu" // fallback
 					for _, opt := range rootOptions {
