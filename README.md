@@ -24,7 +24,7 @@ function nav() {
 }
 ```
 
-Optionally you can build the app to any other directory and then update the shell script to point there instead, e.g. `dir=$(~/bin/talias)`. Also note that the name of the function above will be what is used to call the application.
+Optionally you can build the app to any other directory and then update the shell script to point there instead, e.g. `command=$(~/bin/talias)`. Also note that the name of the function above will be what is used to call the application.
 
 ### Set Options
 
@@ -43,9 +43,21 @@ Create `~/.talias/options.json` with the following config:
     "command": "cd ~/Documents && pwd"
   },
   {
-    "title": "Downloads",
-    "details": "cd ~/Downloads",
-    "command": "cd ~/Downloads && pwd"
+    "title": "Docker",
+    "details": "Docker commands",
+    "command": "",
+    "children": [
+      {
+        "title": "Docker Down",
+        "details": "docker-compose down",
+        "command": "docker-compose down"
+      },
+      {
+        "title": "Docker Version",
+        "details": "docker --version",
+        "command": "docker --version"
+      }
+    ]
   }
 ]
 ```
