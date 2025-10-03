@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -16,6 +17,38 @@ type Option struct {
   Details  string   `json:"details"`
   Command  string   `json:"command"`
   Children []Option `json:"children,omitempty"`
+}
+
+type Parameter struct {
+	Index int    // The number in ${n:label}
+	Label string // The label after the colon
+	Placeholder string // The full placeholder like ${1:graph}
+}
+
+// parseParameters extracts ${n:label} parameters from a command string
+func parseParameters(command string) []Parameter {
+	var parameters []Parameter
+	
+	// Regular expression to match ${n:label} pattern
+	re := regexp.MustCompile(`\$\{(\d+):([^}]+)\}`)
+	matches := re.FindAllStringSubmatch(command, -1)
+	
+	for _, match := range matches {
+		if len(match) == 3 {
+			index := 0
+			fmt.Sscanf(match[1], "%d", &index) // Parse the number
+			label := match[2]                  // The label after the colon
+			placeholder := match[0]            // The full placeholder
+			
+			parameters = append(parameters, Parameter{
+				Index:       index,
+				Label:       label,
+				Placeholder: placeholder,
+			})
+		}
+	}
+	
+	return parameters
 }
 
 func loadOptionsFromFile(filename string) ([]Option, error) {
@@ -133,15 +166,37 @@ func main() {
 	var searchQuery string = ""
 	var searchResults []Option
 	var allOptions []Option = flattenOptions(rootOptions) // Flattened list of all options for search
+	
+	// Parameter prompt state
+	var currentParameterOption Option
+	var currentParameters []Parameter
+	var currentParameterIndex int
+	var parameterValues map[string]string = make(map[string]string)
+	var parameterMode bool = false
+	
+	// Grid reference (will be initialized later)
+	var grid *tview.Grid
+
+	// Function declarations for parameter prompts
+	var showParameterPrompts func(Option, []Parameter)
+	var showNextParameterPrompt func()
+	var handleCommand func(Option)
+	var executeCommandWithParameters func(Option, []Parameter, map[string]string)
 
 	// Top: list
 	list := tview.NewList()
 	list.SetBackgroundColor(tcell.ColorDefault)
 
+	// Bottom: info box
+	infoBox := tview.NewTextView().
+		SetText("Welcome! Select an option.").
+		SetDynamicColors(true).
+		SetWrap(true)
+	infoBox.SetBackgroundColor(tcell.ColorDefault)
+
 	// Search input field
 	searchInput := tview.NewInputField().
-		SetLabel("Search: ").
-		SetFieldWidth(50)
+		SetLabel("Search: ")
 	searchInput.SetBackgroundColor(tcell.ColorDefault)
 	
 	// Custom input capture for search input to handle up/down navigation
@@ -166,7 +221,7 @@ func main() {
 			if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
 				selectedIndex := list.GetCurrentItem()
 				if selectedIndex < len(searchResults) {
-					executeCommand(searchResults[selectedIndex], app)
+					handleCommand(searchResults[selectedIndex])
 				}
 			}
 			return nil
@@ -174,13 +229,6 @@ func main() {
 		// Let all other keys (including left/right arrows) pass through to the input field
 		return event
 	})
-
-	// Bottom: info box
-	infoBox := tview.NewTextView().
-		SetText("Welcome! Select an option.").
-		SetDynamicColors(true).
-		SetWrap(true)
-	infoBox.SetBackgroundColor(tcell.ColorDefault)
 
 	// Function to populate list with current options
 	var populateList func()
@@ -207,7 +255,7 @@ func main() {
 					infoBox.SetText("Select an option from " + currentTitle)
 				} else {
 					// Execute command
-					executeCommand(option, app)
+					handleCommand(option)
 				}
 			})
 		}
@@ -225,7 +273,7 @@ func main() {
 				displayTitle = "> " + opt.Title
 			}
 			list.AddItem(displayTitle, "", 0, func() {
-				executeCommand(opt, app)
+				handleCommand(opt)
 			})
 		}
 	}
@@ -246,14 +294,8 @@ func main() {
 		}
 	})
 
-	// Search input change handler
-	searchInput.SetChangedFunc(func(text string) {
-		searchQuery = text
-		populateSearchResults()
-	})
-
 	// Grid layout
-	grid := tview.NewGrid().
+	grid = tview.NewGrid().
 		SetRows(0, 5).
 		SetColumns(0).
 		SetBorders(true).
@@ -262,6 +304,104 @@ func main() {
 		AddItem(infoBox, 1, 0, 1, 1, 0, 0, false)
 	
 	grid.SetBackgroundColor(tcell.ColorDefault)
+
+	// Assign the function implementations
+	showParameterPrompts = func(option Option, parameters []Parameter) {
+		parameterMode = true
+		
+		// Sort parameters by index to ensure correct order
+		for i := 0; i < len(parameters)-1; i++ {
+			for j := i + 1; j < len(parameters); j++ {
+				if parameters[i].Index > parameters[j].Index {
+					parameters[i], parameters[j] = parameters[j], parameters[i]
+				}
+			}
+		}
+		
+		// Store the option and parameters for the prompt sequence
+		currentParameterOption = option
+		currentParameters = parameters
+		currentParameterIndex = 0
+		
+		// Start with the first parameter
+		showNextParameterPrompt()
+	}
+	
+	showNextParameterPrompt = func() {
+		if currentParameterIndex >= len(currentParameters) {
+			// All parameters collected, execute the command
+			executeCommandWithParameters(currentParameterOption, currentParameters, parameterValues)
+			return
+		}
+		
+		param := currentParameters[currentParameterIndex]
+		
+		// Create parameter input field
+		paramInput := tview.NewInputField().
+			SetLabel(fmt.Sprintf("%s: ", param.Label))
+		paramInput.SetBackgroundColor(tcell.ColorDefault)
+		
+		// Set the done function after creating the input field
+		paramInput.SetDoneFunc(func(key tcell.Key) {
+			if key == tcell.KeyEnter {
+				// Store the parameter value and move to next
+				paramValue := paramInput.GetText()
+				parameterValues[param.Placeholder] = paramValue
+				currentParameterIndex++
+				showNextParameterPrompt()
+			}
+		})
+		
+		// Modify grid layout to add parameter input at the top
+		grid.Clear().
+			SetRows(1, 0, 5).
+			SetColumns(0).
+			SetBorders(true).
+			SetBordersColor(tcell.ColorWhite).
+			AddItem(paramInput, 0, 0, 1, 1, 0, 0, true).
+			AddItem(list, 1, 0, 1, 1, 0, 0, false).
+			AddItem(infoBox, 2, 0, 1, 1, 0, 0, false)
+		
+		app.SetFocus(paramInput)
+	}
+	
+	executeCommandWithParameters = func(option Option, parameters []Parameter, values map[string]string) {
+		if len(option.Command) == 0 {
+			return
+		}
+		
+		// Replace all parameters with their values
+		expandedCommand := option.Command
+		for _, param := range parameters {
+			if value, exists := values[param.Placeholder]; exists {
+				expandedCommand = strings.ReplaceAll(expandedCommand, param.Placeholder, value)
+			}
+		}
+		
+		expandedCommand = expandCommand(expandedCommand)
+		fmt.Print(expandedCommand)
+		app.Stop()
+	}
+
+	handleCommand = func(option Option) {
+		if len(option.Command) == 0 {
+			return
+		}
+		
+		// Check if command contains ${n:label} parameters
+		parameters := parseParameters(option.Command)
+		if len(parameters) > 0 {
+			showParameterPrompts(option, parameters)
+		} else {
+			executeCommand(option, app)
+		}
+	}
+
+	// Search input change handler
+	searchInput.SetChangedFunc(func(text string) {
+		searchQuery = text
+		populateSearchResults()
+	})
 
 	// Function to switch to search mode
 	switchToSearchMode := func() {
@@ -295,7 +435,7 @@ func main() {
 				if len(searchResults) > 0 && list.GetCurrentItem() >= 0 {
 					selectedIndex := list.GetCurrentItem()
 					if selectedIndex < len(searchResults) {
-						executeCommand(searchResults[selectedIndex], app)
+						handleCommand(searchResults[selectedIndex])
 					}
 				}
 				return nil
@@ -304,12 +444,21 @@ func main() {
 		})
 	}
 
-	// Function to switch back to normal mode
-	switchToNormalMode := func() {
+	// Function to switch back to main menu (unified for both search and parameter modes)
+	switchToMainMenu := func() {
+		// Reset all modes
 		searchMode = false
+		parameterMode = false
 		searchQuery = ""
+		
+		// Reset parameter state
+		currentParameterIndex = 0
+		parameterValues = make(map[string]string)
+		
 		// Clear the list input capture to restore normal behavior
 		list.SetInputCapture(nil)
+		
+		// Restore original grid layout
 		grid.Clear().
 			SetRows(0, 5).
 			SetColumns(0).
@@ -317,6 +466,7 @@ func main() {
 			SetBordersColor(tcell.ColorWhite).
 			AddItem(list, 0, 0, 1, 1, 0, 0, true).
 			AddItem(infoBox, 1, 0, 1, 1, 0, 0, false)
+		
 		app.SetFocus(list)
 		populateList()
 		infoBox.SetText("Select an option from " + currentTitle)
@@ -335,10 +485,10 @@ func main() {
 			switchToSearchMode()
 			return nil
 		}
-		// Escape: go back if in submenu, quit if at top level, exit search if in search mode
+		// Escape: go back if in submenu, quit if at top level, exit modes if in search/parameter mode
 		if event.Key() == tcell.KeyEscape {
-			if searchMode {
-				switchToNormalMode()
+			if searchMode || parameterMode {
+				switchToMainMenu()
 			} else if len(menuStack) > 0 {
 				// Go back to previous menu
 				currentOptions = menuStack[len(menuStack)-1]
